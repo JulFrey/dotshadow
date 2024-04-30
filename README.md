@@ -6,4 +6,8 @@ This R script takes a point cloud of vegetation from terrestrial laser scanning 
 
 ![workflow](./images/algorithm_illustration.png)
 
+Within the data folder you can find an example point cloud and PAR sensor data recorded by a sensor network below the tree for validation. 
+
+![workflow](./images/animation.gif)
+
 How to cite:
