@@ -268,9 +268,13 @@ write_obj_par <- function(pol, file, mtl_name = "Material1", cores = 5){
 # @param mtl_name character containing the name for the Material specified in a separate mtl file 
 # @param fast if set to TRUE it will use less accurate rounding to speed up the process and create smaller files
 # @param backfaces if set to TRUE it will add the reverse order of the triangles to create backfaces
-write_obj_df <- function(pol, file, mtl_name = "Material1", fast = T, backfaces = T){
+write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = T, backfaces = T){
   # generate header information
-  obj_head <- c("# File created with R write_obj", paste("#", Sys.Date()),paste0("mtllib ", mtl_name, ".mtl") ,paste("usemtl", mtl_name), 'o object1')
+  
+  if(is.na(mtl_lib)){
+    mtl_lib <- mtl_name
+  }
+  obj_head <- c("# File created with R write_obj", paste("#", Sys.Date()),paste0("mtllib ", mtl_lib, ".mtl") ,paste("usemtl", mtl_name), 'o object1')
   write(obj_head, file)
   #check if its a list or just one polygon
   if(is.list(pol)){
@@ -424,7 +428,7 @@ tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores(
   if(!is.empty(bark)){
     
     t2 <- system.time({ # measure execution time
-      bark_polys <- foreach(z = unique(vegetation_vox$Z), .noexport = c("las"), .export = c('plane_3d','create_circle','random_rotation_matrix'), .combine = "c") %dopar% {
+      bark_polys <- foreach(z = unique(bark_vox$Z), .noexport = c("las"), .export = c('plane_3d','create_circle','random_rotation_matrix'), .combine = "c") %dopar% {
         vox_slice <- bark_vox[bark_vox$Z == z,]
         bark_slice <- bark@data[bark@data$z_vox == z,c("X","Y","Z","x_vox","y_vox","z_vox")]
         polys <- list()
@@ -488,7 +492,10 @@ las@data$Y <- las@data$Y - means[2]
 las@data$Z <- las@data$Z - means[3]
 
 
-tree_mesh(las, target_dir = outdir, segments = 5)
+veg_bark <- tree_mesh(las, target_dir = NA, segments = 5)
+
+write_obj_df(veg_bark$leaves, "C:/Users/Julian/Desktop/leaves.obj", mtl_name = "Fagus_sylvatica_leaf", mtl_lib = "materials", backfaces = F)
+write_obj_df(veg_bark$bark, "C:/Users/Julian/Desktop/bark.obj", mtl_name = "Fagus_sylvatica_bark", mtl_lib = "materials", backfaces = F)
 
 # ###################
 # ## calculate bbox for blender images
