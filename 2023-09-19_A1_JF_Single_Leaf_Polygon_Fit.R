@@ -32,11 +32,16 @@ singletons_factor <- 1/3 # multiplication factor for voxel size to create circle
 
 # function to fit a planar convex hull polygon to a set of rows of3d points "mat"
 # it extends the convex hull by the buffer value
-# if plot_vox is set to TRUE it will plot the 3d points and the convex hull
-plane_3d <- function(mat, buffer = 0.005, plot_vox = F){
+# @param mat a matrix with 3d points
+# @param buffer the buffer value to extend the convex hull
+# @param plot_vox if TRUE it will plot the 3d points and the convex hull
+# @param vox_size the voxel size to fit polygons
+# @param singletons_factor multiplication factor for voxel size to create circles from single points in voxels (if <3pts in voxel)
+# @param segments number of segments for the single point circle
+
+plane_3d <- function(mat, buffer = 0.005, plot_vox = F, vox_size = 0.05, singletons_factor = 1/3, segments = 6){
   if(nrow(mat) < 3) {
-    warning("Less than 3 points in voxel, return NA")
-    return(NA)
+    return(create_circle(colMeans(mat), buffer = vox_size * singletons_factor, segments = segments))
     } # if less than 3 points return NA (no plane possible)
   # calculate center and center mat 
   mean_X <- mean(mat[,1])
@@ -258,38 +263,223 @@ write_obj_par <- function(pol, file, mtl_name = "Material1", cores = 5){
 }
 
 # function to write polygons without triangulation by rgl
-# pol: a list of data.frames with 3d points for each polygon
-# file: the filepath
-# mtl_name: character containing the name for the Material specified in a separate mtl file 
-write_obj_df <- function(pol, file, mtl_name = "Material1"){
+# @param pol a list of data.frames with 3d points for each polygon
+# @param file the filepath
+# @param mtl_name character containing the name for the Material specified in a separate mtl file 
+# @param fast if set to TRUE it will use less accurate rounding to speed up the process and create smaller files
+# @param backfaces if set to TRUE it will add the reverse order of the triangles to create backfaces
+write_obj_df <- function(pol, file, mtl_name = "Material1", fast = T, backfaces = T){
   # generate header information
-  obj_head <- c("# File created with R write_obj", paste("#", Sys.Date()), paste("usemtl", mtl_name), 'o object1')
+  obj_head <- c("# File created with R write_obj", paste("#", Sys.Date()),paste0("mtllib ", mtl_name, ".mtl") ,paste("usemtl", mtl_name), 'o object1')
   write(obj_head, file)
   #check if its a list or just one polygon
   if(is.list(pol)){
     l <- 0 # index for vertex numbers already used
     lines <- character()
-    for(p in pol){
-      v = apply(p, 1, function(x) paste("v", paste(round(x,5), collapse = " "))) # add the coordinates round(p$vb,5)
-      f = paste("f", paste(1:nrow(p)+l, collapse = " ")) # add the triangle coordinate order
-      f_rev = paste("f", paste(rev(1:nrow(p))+l, collapse = " ")) # add the reverse order for backsides
-      l <- l+nrow(p) # increase the vertex index 
-      #lines <- c(lines, c(v,f,f_rev))# add the lines
-      write(c("\n",v,f,f_rev), file, append = T)
+    if(fast){
+      options(scipen = 10)
+          for(p in pol){
+            v = apply(p, 1, function(x) paste("v", paste(round(x,5), collapse = " "))) # add the coordinates round(p$vb,5)
+            f = paste("f", paste(round(1:nrow(p)+l,5), collapse = " ")) # add the triangle coordinate order
+            if(backfaces){
+              f_rev = paste("f", paste(rev(round(1:nrow(p)+l, )), collapse = " ")) # add the reverse order for backsides
+              write(c(v,f,f_rev), file, append = T)
+            } else {
+              write(c(v,f), file, append = T)
+            }
+            l <- l+nrow(p) # increase the vertex index 
+          }
+          #writeLines(c(obj_head,lines), file) # write to file
+      } else {
+        for(p in pol){
+          v = apply(p, 1, function(x) paste("v", paste(format(x,scientific = F), collapse = " "))) # add the coordinates round(p$vb,5)
+          f = paste("f", paste(format(1:nrow(p)+l, scientific = F), collapse = " ")) # add the triangle coordinate order
+          if(backfaces){
+            f_rev = paste("f", paste(rev(format(1:nrow(p)+l, scientific = F)), collapse = " ")) # add the reverse order for backsides
+            #lines <- c(lines, c(v,f,f_rev))# add the lines
+            write(c(v,f,f_rev), file, append = T)
+          } else {
+            l <- l+nrow(p) # increase the vertex index 
+            #lines <- c(lines, c(v,f))# add the lines
+            write(c(v,f), file, append = T)
+          }
+          l <- l+nrow(p) # increase the vertex index 
+        }
+        #writeLines(c(obj_head,lines), file) # write to file
     }
-    #writeLines(c(obj_head,lines), file) # write to file
-  } else {
-    warning("pol needs to be a list with data.frames")
-    stop()
+    } else {
+      warning("pol needs to be a list with data.frames")
+      stop()
+    }
+}
+
+#' Generate a .mtl file from a color palette
+#'
+#' This function generates a .mtl file from a color palette. The .mtl file is a file format that describes the material properties of objects in a 3D scene. The .mtl file is used in conjunction with .obj files to describe the appearance of 3D objects. The colors from the palette will be numbered as c1 to cn_cols in the .mtl file.
+#'
+#' @param palette A color palette to use for the materials
+#' @param filename The name of the .mtl file to generate
+#' @param n_cols The number of colors to use from the palette
+#'
+#' @return A .mtl file with the material properties of the colors in the palette
+#' @export generate_mtl_file
+#'
+#' @examples
+#' generate_mtl_file(filename = "clipboard", n_cols = 1)
+#' print(readClipboard())
+
+generate_mtl_file <- function(palette = sample(grey.colors(n_cols)), filename = "colors.mtl", n_cols = 10) {
+  col2mtl <- function(col) {
+    paste(paste(c("Ka","Kd","Ks"),paste(col2rgb(col)/255, collapse = " ")) , collapse = "\n")
   }
+  
+  cols <- palette[1:n_cols]
+  col_df <- cbind(paste0("newmtls c",1:n_cols,"\n"), sapply(cols, col2mtl))
+  col_lines <- apply(col_df, 1, function(x) paste(x, collapse = " "))
+  
+  writeLines(col_lines, filename)
 }
 
 
-###############
-## read and preprocess data 
-###############
+#Function to calculate obj mesh objects out of a tree point cloud
+#
+# @param f filepath to the las file 
+# @param class_thresh threshold for the classification of leaves (default = -5.4)
+# @param num_cores number of cores for parallel processing (default = detectCores()/2-1)
+# @param vox_size voxel size in m for polygon fitting (default = 0.05)
+# @param buffer buffer polygons by this size to avoid artificial gaps (default = 0.005)
+# @param min_pts_vox minimum number of points per plain fitting voxel (default = 3)
+# @param singletons_factor multiplication factor for voxel size to create circles from single points in voxels (if <3pts in voxel) (default = 1/3)
+# @param target_dir directory to save the obj files (default = basename(f)), if NA returns a list with the polygons
+# @param backfaces if TRUE it will add the reverse order of the triangles to create backfaces (default = T)
+# @param mtl_prefix prefix for the material name in the mtl file usually the tree species (default = NA)
+tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores()/2-1, vox_size = 0.05, buffer = 0.005, min_pts_vox = 3, singletons_factor = 1/3, segments = 3, target_dir = basename(f), backfaces = T, mtl_prefix = NA){
+  
+  if(lidR::is(f, "LAS")){
+    las <- f
+    f <- "tree.las"
+    } else {
+    if(!file.exists(f)){
+      stop("file does not exist")
+    }
+    head <- rlas::read.lasheader(f)
+    # check for offset
+    if(any(head[c(grep("Max",names(head)), grep("Min",names(head)))] > 9000)) {
+      error("pointcloud has a large offset which might lead to numerical problems.")
+    }
+    las <- lidR::readTLSLAS(f, select = "0")
+  }
+  # classify leaf/wood (Reflectance < -5.4)
+  las@data$Classification[las$Reflectance >= class_thresh] <- 0L
+  las@data$Classification[las$Reflectance < class_thresh] <- 4L
+  
+  # use 5cm voxel to assign the most abundant class to all points in voxel
+  class_vox <- las |> voxel_metrics(most_abundant(Classification), res = vox_size)
+  las <- las |> add_voxel_coordinates(res = vox_size)
+  las@data <- merge(las@data, class_vox, by.x = c("x_vox","y_vox","z_vox"), by.y = c("X","Y","Z"))
+  
+  # filter leaves and calculate voxel coordinates for loop and
+  # create a fitting plane convex hull for every 5cm leave voxel
+  vegetation <- las |>  filter_poi(V1 == 4)
+  bark <- las |>  filter_poi(V1 == 0)
+  if(!is.empty(vegetation)){
+    vegetation_vox <- vegetation |> voxel_metrics(length(Z), vox_size)
+  }
+  if(!is.empty(bark)){
+    bark_vox <- bark |> voxel_metrics(length(Z), vox_size)
+  }
+  # Register a parallel backend
+  cluster_available <- tryCatch({
+    unlist(foreach(i = 1) %dopar% {return(TRUE)})
+  }, error = function(e) {
+    F
+  })
+  
+  if(!cluster_available){
+    cl <- makeCluster(num_cores)
+    registerDoParallel(cl)
+  }
+  # parallel process for voxel extraction and convex hull fitting
+  if(!is.empty(vegetation)){
+    t1 <- system.time({ # measure execution time
+      veg_polys <- foreach(z = unique(vegetation_vox$Z), .noexport = c("las"), .export = c('plane_3d','create_circle','random_rotation_matrix'), .combine = "c") %dopar% {
+          vox_slice <- vegetation_vox[vegetation_vox$Z == z,]
+          veg_slice <- vegetation@data[vegetation@data$z_vox == z,c("X","Y","Z","x_vox","y_vox","z_vox")]
+          polys <- list()
+          for(v in 1:nrow(vox_slice)){
+            vox_bb <- vox_slice[v,]
+            vox <- veg_slice[veg_slice$z_vox == vox_bb$Z[1],]
+            vox <- vox[vox$x_vox == vox_bb$X[1],]
+            vox <- vox[vox$y_vox == vox_bb$Y[1],]
+            polys <- c(polys,list(plane_3d(as.matrix(vox[, 1:3]), buffer, F, vox_size, singletons_factor, segments = segments)))
+          }
+          return(polys)
+      }
+    })
+  }
+  #veg_polys <- unlist(veg_polys, recursive = F)
+  
+  # create a fitting plane convex hull for every 5cm wood voxel
+  bark_polys <- list()
+  if(!is.empty(bark)){
+    
+    t2 <- system.time({ # measure execution time
+      bark_polys <- foreach(z = unique(vegetation_vox$Z), .noexport = c("las"), .export = c('plane_3d','create_circle','random_rotation_matrix'), .combine = "c") %dopar% {
+        vox_slice <- bark_vox[bark_vox$Z == z,]
+        bark_slice <- bark@data[bark@data$z_vox == z,c("X","Y","Z","x_vox","y_vox","z_vox")]
+        polys <- list()
+        for(v in 1:nrow(vox_slice)){
+          vox_bb <- vox_slice[v,]
+          vox <- bark_slice[bark_slice$z_vox == vox_bb$Z[1],]
+          vox <- vox[vox$x_vox == vox_bb$X[1],]
+          vox <- vox[vox$y_vox == vox_bb$Y[1],]
+          polys <- c(polys,list(plane_3d(as.matrix(vox[, 1:3]), buffer, F, vox_size, singletons_factor, segments = segments)))
+        }
+        return(polys)
+      }
+    })
+  }
+  # parallel process for voxel extraction and convex hull fitting
+  # t2 <- system.time({ # measure execution time
+  #   bark_polys <- foreach(v = 1:nrow(bark_vox), .noexport = c("las"), .export = c('plane_3d','create_circle', 'random_rotation_matrix')) %dopar% { # for some reason this fails randomly
+  #       vox_bb <- bark_vox[v,]
+  #       vox <- bark@data[bark@data$z_vox == vox_bb$Z[1],c("X","Y","Z","x_vox","y_vox","z_vox")]
+  #       vox <- vox[vox$x_vox == vox_bb$X[1],]
+  #       vox <- vox[vox$y_vox == vox_bb$Y[1],]
+  #       plane_3d(as.matrix(vox[, 1:3]), buffer, F, vox_size, singletons_factor, segments = segments)
+  #   }
+  # })
+  # stop the parallel backend
+  if(!cluster_available){
+    stopCluster(cl)
+  }
+  
+  # generate material string
+  if(is.na(mtl_prefix)){
+    leaf_mtl <- "leaf"
+    bark_mtl <- "bark"
+  } else {
+    leaf_mtl <- paste0(mtl_prefix, "_leaf")
+    bark_mtl <- paste0(mtl_prefix, "_bark")
+  }
+  
+  # check if target dir exists and write obj files
+  if(is.na(target_dir)) {
+    return(list(leaves = veg_polys, bark = bark_polys))
+  } else {
+    if(!dir.exists(target_dir)){
+      dir.create(target_dir)
+    }
+    if(!is.empty(vegetation)) write_obj_df(veg_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_leaves.obj"), mtl_name = leaf_mtl, backfaces = backfaces)
+    if(!is.empty(bark)) write_obj_df(bark_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_bark.obj"), mtl_name = bark_mtl, backfaces = backfaces)
+  }
+}
 
-las <- readLAS(filename)
+# ###############
+# ## read and preprocess data 
+# ###############
+# 
+las <- lidR::readTLSLAS(filename)
 
 # apply offset for to avoid numerical problems
 means <- apply(las@data,2,mean)
@@ -298,142 +488,7 @@ las@data$Y <- las@data$Y - means[2]
 las@data$Z <- las@data$Z - means[3]
 
 
-# classify leaf/wood (Reflectance < -5.4)
-hist(las$Reflectance, breaks = 100)
-abline(v = -5.4)
-las$Classification[las$Reflectance < -5.4] <- 4L
-
-# use 5cm voxel to assign the most abundant class to all points in voxel
-class_vox <- las |> voxel_metrics(most_abundant(Classification), res = vox_size)
-las <- las |> add_voxel_coordinates(res = vox_size)
-las@data <- merge(las@data, class_vox, by.x = c("x_vox","y_vox","z_vox"), by.y = c("X","Y","Z"))
-
-###############
-## Fit a polygon to every voxel
-###############
-
-# filter leaves and calculate voxel coordinates for loop and
-# create a fitting plane convex hull for every 5cm leave voxel
-vegetation <- las |>  filter_poi(V1 == 4)
-vegetation_vox <- vegetation |> voxel_metrics(length(Z), vox_size)
-vegetation_vox_singles <- vegetation_vox[vegetation_vox$V1 < min_pts_vox,]
-vegetation_vox <- vegetation_vox[vegetation_vox$V1 >= min_pts_vox,]
-
-# Register a parallel backend
-cl <- makeCluster(num_cores)
-registerDoParallel(cl)
-
-# parallel process for voxel extraction and convex hull fitting
-t1 <- system.time({ # measure execution time
-  polys <- foreach(v = 1:nrow(vegetation_vox), .noexport = c("las")) %dopar% {
-    tryCatch({
-      vox_bb <- vegetation_vox[v,]
-      vox <- vegetation |> lidR::filter_poi(x_vox == vox_bb$X[1], y_vox == vox_bb$Y[1], z_vox == vox_bb$Z[1])
-      plane_3d(as.matrix(vox@data[, 1:3]), buffer)
-    }, error = function(e) {return(v) })
-  }
-  fails <- sapply(polys, is.integer)
-  if(any(fails)){ 
-    polys[fails] <- foreach(v = simplify2array(polys[fails]), .noexport = c("las")) %dopar% { 
-      tryCatch({
-        vox_bb <- vegetation_vox[v,]
-        vox <- vegetation |> lidR::filter_poi(x_vox == vox_bb$X[1], y_vox == vox_bb$Y[1], z_vox == vox_bb$Z[1])
-        plane_3d(as.matrix(vox@data[, 1:3]), buffer)
-      }, error = function(e) {return(v) })
-    }
-  }
-})
-
-# Stop the parallel back end
-stopCluster(cl)
-print(paste("Processing time for leafs:", t1[3]/60, "min"))
-
-# add circles to single points in voxels
-vegetation_singles <- merge(las@data, vegetation_vox_singles, by.x = c("x_vox", "y_vox", "z_vox"), by.y = c("X","Y","Z"))[,c("X","Y","Z")]
-vegetation_singles_polys <- list()
-for(i in 1:nrow(vegetation_singles)){
-  vegetation_singles_polys[[i]] <- create_circle(as.numeric(vegetation_singles[i,]), buffer = vox_size * singletons_factor)
-}
-
-# combine convex hulls and circles
-veg_polys <- c(polys, vegetation_singles_polys)
-
-# create a fitting plane convex hull for every 5cm wood voxel
-bark_polys <- list()
-bark <- las |>  filter_poi(V1 == 0)
-bark_vox <- bark |> voxel_metrics(length(Intensity), vox_size)
-bark_vox_singles <- bark_vox[bark_vox$V1 < min_pts_vox,]
-bark_vox <- bark_vox[bark_vox$V1 >= min_pts_vox,]
-
-# Register a parallel back end
-cl <- makeCluster(num_cores)
-registerDoParallel(cl)
-
-# parallel process for voxel extraction and convex hull fitting
-t2 <- system.time({ # measure execution time
-  bark_polys <- foreach(v = 1:nrow(bark_vox), .noexport = c("las")) %dopar% { # for some reason this fails randomly
-    tryCatch({
-      vox_bb <- bark_vox[v,]
-      vox <- bark |> lidR::filter_poi(x_vox == vox_bb$X[1], y_vox == vox_bb$Y[1], z_vox == vox_bb$Z[1])
-      plane_3d(as.matrix(vox@data[, 1:3]), buffer)
-    }, error = function(e) {return(v) })
-  }
-  fails <- sapply(bark_polys, is.integer)
-  if(any(fails)){ # therefore we try again
-    bark_polys[fails] <- foreach(v = simplify2array(bark_polys[fails]), .noexport = c("las")) %dopar% { 
-      tryCatch({
-        vox_bb <- bark_vox[v,]
-        vox <- bark |> lidR::filter_poi(x_vox == vox_bb$X[1], y_vox == vox_bb$Y[1], z_vox == vox_bb$Z[1])
-        plane_3d(as.matrix(vox@data[, 1:3]), buffer)
-      }, error = function(e) {return(v) })
-    }
-  }
-})
-
-stopCluster(cl)
-
-# create polygons for single points
-bark_singles <- merge(las@data, bark_vox_singles, by.x = c("x_vox", "y_vox", "z_vox"), by.y = c("X","Y","Z"))[,c("X","Y","Z")]
-bark_singles_polys <- list()
-for(i in 1:nrow(bark_singles)){
-  bark_singles_polys[[i]] <- create_circle(as.numeric(bark_singles[i,]), buffer = vox_size * 0.25)
-}
-
-# combine convex hulls and circles
-bark_polys <- c(bark_polys, bark_singles_polys)
-
-# # write dtm as stl to disk
-# dtm_tin <- rasterize_terrain(filter_poi(las, Classification == 2), res = 0.1)
-# plot_dtm3d(dtm_tin, clear_artifacts = F)
-# writeSTL(paste0(outdir, "dtm2.stl"))
-# close3d()
-
-# # triangulate polygons using rgl
-# cl <- makeCluster(num_cores)
-# item_rgl <- parLapply(cl = cl, X = veg_polys, fun = create_shape)
-# stopCluster(cl)
-# 
-# # this failes for single triangle-polygons with duplicated points
-# # which get excluded
-# failed_rgl <- which(sapply(item_rgl,is.null))
-# length(failed_rgl)
-# item_rgl <-  item_rgl[!sapply(item_rgl,is.null)]
-# 
-# bark_item_rgl  <- lapply(bark_polys, create_shape, col = "chocolate4")
-# bark_item_rgl <-  bark_item_rgl[!sapply(bark_item_rgl,is.null) & (sapply(bark_item_rgl,typeof) == "list")]
-
-# # export bark and leaf polygons separately
-# close3d()
-# with(las@data, plot3d(X,Y,Z, aspect = F, type = "n", col = grey(0.5, 0.5), decorate = F))
-# rgl::shade3d(shapelist3d(item_rgl, plot = FALSE), lit = F)
-# writeSTL(paste0(outdir, "leaves_new.stl"))
-# close3d()
-# with(las@data, plot3d(X,Y,Z, aspect = F, type = "n", col = grey(0.5, 0.5), decorate = F), lwd = NULL)
-# rgl::shade3d(shapelist3d(bark_item_rgl, plot = FALSE), lit = T)
-# writeSTL(paste0(outdir, "bark_new.stl"))
-# close3d()
-write_obj_df(veg_polys, paste0(outdir, "leaves.obj"))
-write_obj_df(bark_polys, paste0(outdir, "bark.obj"))
+tree_mesh(las, target_dir = outdir, segments = 5)
 
 # ###################
 # ## calculate bbox for blender images
@@ -485,3 +540,31 @@ write_obj_df(bark_polys, paste0(outdir, "bark.obj"))
 # png_dir <- "V:/RayLeaf/out/shade_sec/"
 # files <- list.files(png_dir, pattern = "*.png")
 # for(f in files) writeLines(worldfile, paste0( png_dir, strsplit(f, "[.]")[[1]][1], ".pgw"))
+
+
+###############
+## process multiple trees
+###############
+
+mesh_dir <- "E:/2021-07-15 hartheim.RiSCAN/EXPORTS/single_trees2/meshes/"
+if(!dir.exists(mesh_dir)){
+  dir.create(mesh_dir)
+}
+
+# example usage
+times <- list()
+# define range to restart if process died
+f_files <- list.files("E:/2021-07-15 hartheim.RiSCAN/EXPORTS/single_trees2/", pattern = "*.las", full.names = T)
+# define range if variable f already exists
+if(exists("f")) {
+  f_range <- which(f_files == f):length(f_files)
+} else {
+  f_range <- 1:length(f_files)
+}
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+for(f in f_files[f_range]){
+  times <- c(times, system.time(tree_mesh(f, target_dir = mesh_dir, segments = 3)))
+  print(paste(Sys.time(), basename(f)))
+}
+stopCluster(cl)
