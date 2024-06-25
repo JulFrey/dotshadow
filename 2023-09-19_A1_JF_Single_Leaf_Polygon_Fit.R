@@ -282,16 +282,37 @@ write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = 
     lines <- character()
     if(fast){
       options(scipen = 10)
+      idx <- 0
+      out <- list()
+      #out <- character()
           for(p in pol){
-            v = apply(p, 1, function(x) paste("v", paste(round(x,5), collapse = " "))) # add the coordinates round(p$vb,5)
+            p <- round(p,5)
+            if(any(is.na(p))) next
+            idx <- idx + 1 # increment polygon index
+            v = apply(p, 1, function(x) paste("v", paste(x, collapse = " "))) # add the coordinates round(p$vb,5)
             f = paste("f", paste(round(1:nrow(p)+l,5), collapse = " ")) # add the triangle coordinate order
             if(backfaces){
               f_rev = paste("f", paste(rev(round(1:nrow(p)+l, )), collapse = " ")) # add the reverse order for backsides
-              write(c(v,f,f_rev), file, append = T)
+              #write(c(v,f,f_rev), file, append = T)
+              out <- c(out, list(paste(v, collapse = "\n"),f,f_rev))
+
             } else {
-              write(c(v,f), file, append = T)
+              out <- c(out, list(paste(v, collapse = "\n"),f))
+              #out <- c(out, v,f)
+              #write(c(v,f), file, append = T)
             }
-            l <- l+nrow(p) # increase the vertex index 
+            if(idx > 500){
+              #write(out, file, append = T)
+              data.table::fwrite(out, file, append = T, quote = F, sep = "\n",sep2 = c(""," ",""), row.names = F, col.names = F, nThread = 20)
+              out <- list()
+              #out <- character()
+              idx <- 0
+            }
+            l <- l+nrow(p) # increment the vertex index 
+          }
+          if(length(out) > 0){
+            #write(out, file, append = T)
+            data.table::fwrite(out, file, append = T, quote = F, sep = "\n",sep2 = c(""," ",""), row.names = F, col.names = F, nThread = 20)
           }
           #writeLines(c(obj_head,lines), file) # write to file
       } else {
@@ -357,7 +378,8 @@ generate_mtl_file <- function(palette = sample(grey.colors(n_cols)), filename = 
 # @param target_dir directory to save the obj files (default = basename(f)), if NA returns a list with the polygons
 # @param backfaces if TRUE it will add the reverse order of the triangles to create backfaces (default = T)
 # @param mtl_prefix prefix for the material name in the mtl file usually the tree species (default = NA)
-tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores()/2-1, vox_size = 0.05, buffer = 0.005, min_pts_vox = 3, singletons_factor = 1/3, segments = 3, target_dir = basename(f), backfaces = T, mtl_prefix = NA){
+# @param mtl_lib name of the mtl library file (default = NA) becomes the same as the mtl_name (prefix + _ + leaf or bark)
+tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores()/2-1, vox_size = 0.05, buffer = 0.005, min_pts_vox = 3, singletons_factor = 1/3, segments = 3, target_dir = basename(f), backfaces = T, mtl_prefix = NA, mtl_lib = NA){
   
   if(lidR::is(f, "LAS")){
     las <- f
@@ -474,8 +496,8 @@ tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores(
     if(!dir.exists(target_dir)){
       dir.create(target_dir)
     }
-    if(!is.empty(vegetation)) write_obj_df(veg_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_leaves.obj"), mtl_name = leaf_mtl, backfaces = backfaces)
-    if(!is.empty(bark)) write_obj_df(bark_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_bark.obj"), mtl_name = bark_mtl, backfaces = backfaces)
+    if(!is.empty(vegetation)) write_obj_df(veg_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_leaves.obj"), mtl_name = leaf_mtl,mtl_lib = mtl_lib, backfaces = backfaces)
+    if(!is.empty(bark)) write_obj_df(bark_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_bark.obj"), mtl_name = bark_mtl,mtl_lib = mtl_lib, backfaces = backfaces)
   }
 }
 
@@ -562,6 +584,7 @@ if(!dir.exists(mesh_dir)){
 times <- list()
 # define range to restart if process died
 f_files <- list.files("E:/2021-07-15 hartheim.RiSCAN/EXPORTS/single_trees2/", pattern = "*.las", full.names = T)
+species_estimates <- read.csv("E:/2021-07-15 hartheim.RiSCAN/EXPORTS/species_predictions_2021.csv")
 # define range if variable f already exists
 if(exists("f")) {
   f_range <- which(f_files == f):length(f_files)
@@ -571,7 +594,8 @@ if(exists("f")) {
 cl <- makeCluster(num_cores)
 registerDoParallel(cl)
 for(f in f_files[f_range]){
-  times <- c(times, system.time(tree_mesh(f, target_dir = mesh_dir, segments = 3)))
+  species <- species_estimates[species_estimates$filename == basename(f), "species"]
+  times <- c(times, system.time(tree_mesh(f, target_dir = mesh_dir, segments = 3, mtl_prefix = species, mtl_lib = "materials",backfaces = F, class_thresh = -8, buffer = sqrt(3 * 0.005^2))))
   print(paste(Sys.time(), basename(f)))
 }
 stopCluster(cl)
