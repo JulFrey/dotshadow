@@ -13,6 +13,8 @@ library(rgl)
 library(lidR)
 library(CspStandSegmentation)
 library(doParallel)
+library(ggplot2)
+library(terra)
 
 ###############
 ## Settings
@@ -25,6 +27,9 @@ min_pts_vox <- 3 # minimum number of points per plain fitting voxel
 outdir <- "V:/RayLeaf/out/" # output directory (with tailing /)
 num_cores <- 20 # number of cores for parallel processing
 singletons_factor <- 1/3 # multiplication factor for voxel size to create circles from single points in voxels (if <3pts in voxel)
+
+# less settings
+n_bands <- 60 # number of bands spectral bands
 
 ###############
 ## Functions
@@ -268,9 +273,10 @@ write_obj_par <- function(pol, file, mtl_name = "Material1", cores = 5){
 # @param mtl_name character containing the name for the Material specified in a separate mtl file 
 # @param fast if set to TRUE it will use less accurate rounding to speed up the process and create smaller files
 # @param backfaces if set to TRUE it will add the reverse order of the triangles to create backfaces
-write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = T, backfaces = T){
+# @param mode if set to "normal" it will write the polygons as they are, if set to "dart" it will change the order of the dimensions to yxz
+# @param dart_x_off if mode id "dart" subtract each x-value from this value to invert the x-axis
+write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = T, backfaces = T, mode = "normal", dart_x_off = 0){
   # generate header information
-  
   if(is.na(mtl_lib)){
     mtl_lib <- mtl_name
   }
@@ -284,10 +290,26 @@ write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = 
       options(scipen = 10)
       idx <- 0
       out <- list()
+      less_mat <- matrix(c(0,-1,0,0,
+                           1,0,0,0,
+                           0,0,1,0,
+                           0,0,0,1), nrow = 4 , byrow = T)
       #out <- character()
           for(p in pol){
             p <- round(p,5)
             if(any(is.na(p))) next
+            if(mode == "dart"){
+              p <- p[,c(2,3,1)]
+              p[,3] <- - dart_x_off - p[,3]
+              p[,1] <- - p[,1]
+            }
+            if(mode == "less"){
+              #p <- p[,c(2,3,1)]
+              p <- ((as.matrix(cbind(p,1)) %*% less_mat) |> as.data.frame())[,c(2,3,1)]
+              #p[,3] <- - p[,3]
+              #p[,1] <- - p[,1]
+            }
+            
             idx <- idx + 1 # increment polygon index
             v = apply(p, 1, function(x) paste("v", paste(x, collapse = " "))) # add the coordinates round(p$vb,5)
             f = paste("f", paste(round(1:nrow(p)+l,5), collapse = " ")) # add the triangle coordinate order
@@ -338,6 +360,101 @@ write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = 
     }
 }
 
+# function to write polygons without triangulation by rgl
+# @param vox a data.frame with center coordinates for each voxel
+# @param vox_res the voxel edge length
+# @param file the filepath
+# @param mtl_name character containing the name for the Material specified in a separate mtl file 
+# @param fast if set to TRUE it will use less accurate rounding to speed up the process and create smaller files
+# @param backfaces if set to TRUE it will add the reverse order of the triangles to create backfaces
+# @param mode if set to "normal" it will write the polygons as they are, if set to "dart" it will change the order of the dimensions to yxz
+# @param dart_x_off if mode id "dart" subtract each x-value from this value to invert the x-axis
+write_obj_vox <- function(vox, vox_res = 0.25, file, mtl_name = "Material1",mtl_lib = NA, fast = T, backfaces = T, mode = "normal", dart_x_off = 0){
+  # generate header information
+  if(is.na(mtl_lib)){
+    mtl_lib <- mtl_name
+  }
+  obj_head <- c("# File created with R write_obj", paste("#", Sys.Date()),paste0("mtllib ", mtl_lib, ".mtl") ,paste("usemtl", mtl_name), 'o object1')
+  write(obj_head, file)
+  #check if its a list or just one polygon
+  if(is.data.frame(vox)){
+    #vox <- vox * vox_res # convert to meters
+    # generate the corners of a null cube for the voxels
+    vox_corners <- cbind(expand.grid(X = vox_res/2 * c(-1,1), Y = vox_res/2 * c(-1,1), Z = vox_res/2 * c(-1,1)), n = 1:8)
+    vox_sides <- rbind(which(vox_corners$X == -vox_res/2), which(vox_corners$X == vox_res/2), which(vox_corners$Y == -vox_res/2), which(vox_corners$Y == vox_res/2), which(vox_corners$Z == -vox_res/2), which(vox_corners$Z == vox_res/2))
+    vox_planes <- rep(1:3, each = 2)
+    
+    l <- 0 # index for vertex numbers already used
+      options(scipen = 10)
+      idx <- 0
+      out <- list()
+      less_mat <- matrix(c(0,-1,0,0,
+                           1,0,0,0,
+                           0,0,1,0,
+                           0,0,0,1), nrow = 4 , byrow = T)
+      #out <- character()
+      for(v in 1:nrow(vox)){
+        pol <- list()
+        #generate planes for the cube
+        for(s in 1:nrow(vox_sides)){
+          chull <- chull(vox_corners[vox_sides[s,],-vox_planes[s]])
+          pol[[s]] <- data.frame(X = vox_corners[vox_sides[s,chull],1] + as.numeric(vox[v,1]), Y = vox_corners[vox_sides[s,chull],2] + as.numeric(vox[v,2]), Z = vox_corners[vox_sides[s,chull],3] + as.numeric(vox[v,3]))
+        }
+        out <- list(paste("g voxel",v, sep = "_"))
+        idx <- 0
+        for(p in pol){
+          p <- round(p,5)
+          if(any(is.na(p))) next
+          if(mode == "dart"){
+            p <- p[,c(2,3,1)]
+            p[,3] <- - dart_x_off - p[,3]
+            p[,1] <- - p[,1]
+          }
+          if(mode == "less"){
+            #p <- p[,c(2,3,1)]
+            p <- ((as.matrix(cbind(p,1)) %*% less_mat) |> as.data.frame())[,c(2,3,1)]
+            #p[,3] <- - p[,3]
+            #p[,1] <- - p[,1]
+          }
+          
+          idx <- idx + 1 # increment polygon index
+          v = apply(p, 1, function(x) paste("v", paste(x, collapse = " "))) # add the coordinates round(p$vb,5)
+          f = paste("f", paste(round(1:nrow(p)+l,5), collapse = " ")) # add the triangle coordinate order
+          if(backfaces){
+            f_rev = paste("f", paste(rev(round(1:nrow(p)+l, )), collapse = " ")) # add the reverse order for backsides
+            #write(c(v,f,f_rev), file, append = T)
+            out <- c(out, list(paste(v, collapse = "\n"),f,f_rev))
+            
+          } else {
+            out <- c(out, list(paste(v, collapse = "\n"),f))
+            #out <- c(out, v,f)
+            #write(c(v,f), file, append = T)
+          }
+          
+          
+          # if(idx > 500){
+          #   #
+          #   data.table::fwrite(out, file, append = T, quote = F, sep = "\n",sep2 = c(""," ",""), row.names = F, col.names = F, nThread = 20)
+          #   out <- list()
+          #   #out <- character()
+          #   idx <- 0
+          # }
+          l <- l+nrow(p) # increment the vertex index 
+        }
+        data.table::fwrite(out, file, append = T, quote = F, sep = "\n",sep2 = c(""," ",""), row.names = F, col.names = F, nThread = 20)
+      }
+      # if(length(out) > 0){
+      #   #write(out, file, append = T)
+      #   data.table::fwrite(out, file, append = T, quote = F, sep = "\n",sep2 = c(""," ",""), row.names = F, col.names = F, nThread = 20)
+      # }
+      #writeLines(c(obj_head,lines), file) # write to file
+  } else {
+    warning("vox needs to be a data.frames with three collumns")
+    stop()
+  }
+}
+
+
 #' Generate a .mtl file from a color palette
 #'
 #' This function generates a .mtl file from a color palette. The .mtl file is a file format that describes the material properties of objects in a 3D scene. The .mtl file is used in conjunction with .obj files to describe the appearance of 3D objects. The colors from the palette will be numbered as c1 to cn_cols in the .mtl file.
@@ -352,7 +469,6 @@ write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = 
 #' @examples
 #' generate_mtl_file(filename = "clipboard", n_cols = 1)
 #' print(readClipboard())
-
 generate_mtl_file <- function(palette = sample(grey.colors(n_cols)), filename = "colors.mtl", n_cols = 10) {
   col2mtl <- function(col) {
     paste(paste(c("Ka","Kd","Ks"),paste(col2rgb(col)/255, collapse = " ")) , collapse = "\n")
@@ -364,7 +480,6 @@ generate_mtl_file <- function(palette = sample(grey.colors(n_cols)), filename = 
   
   writeLines(col_lines, filename)
 }
-
 
 #Function to calculate obj mesh objects out of a tree point cloud
 #
@@ -379,7 +494,10 @@ generate_mtl_file <- function(palette = sample(grey.colors(n_cols)), filename = 
 # @param backfaces if TRUE it will add the reverse order of the triangles to create backfaces (default = T)
 # @param mtl_prefix prefix for the material name in the mtl file usually the tree species (default = NA)
 # @param mtl_lib name of the mtl library file (default = NA) becomes the same as the mtl_name (prefix + _ + leaf or bark)
-tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores()/2-1, vox_size = 0.05, buffer = 0.005, min_pts_vox = 3, singletons_factor = 1/3, segments = 3, target_dir = basename(f), backfaces = T, mtl_prefix = NA, mtl_lib = NA){
+# @param write_mode if set to "normal" it will write the polygons as they are, if set to "dart" it will change the order of the dimensions to yxz (default = "normal")
+# @param segments number of segments for the single point circle (default = 3)
+# @param dart_x_off if write_mode "dart" subtract each x-value from this value to invert the x-axis (default = 0)
+tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores()/2-1, vox_size = 0.05, buffer = 0.005, min_pts_vox = 3, singletons_factor = 1/3, segments = 3, target_dir = basename(f), backfaces = T, mtl_prefix = NA, mtl_lib = NA, write_mode = "normal", dart_x_off = 0){
   
   if(lidR::is(f, "LAS")){
     las <- f
@@ -396,8 +514,18 @@ tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores(
     las <- lidR::readTLSLAS(f, select = "0")
   }
   # classify leaf/wood (Reflectance < -5.4)
-  las@data$Classification[las$Reflectance >= class_thresh] <- 0L
-  las@data$Classification[las$Reflectance < class_thresh] <- 4L
+  if(is.numeric(class_thresh)){
+    las@data$Classification[las$Reflectance >= class_thresh] <- 0L # wood
+    las@data$Classification[las$Reflectance < class_thresh] <- 4L # leaf
+  } else if(is.character(class_thresh) && class_thresh %in% names(las@data)) {
+    # use FSCT classes
+    # 1: Terrain, 2: Vegetation, 3: Coarse woody debris, 4: Stems/branches.
+    las@data$Classification[las@data[[class_thresh]] %in% c(3,4)] <- 0L # wood
+    las@data$Classification[las@data[[class_thresh]] %in% c(1,2)] <- 4L # leaf
+  } else {
+    stop("class_thresh needs to be a numeric threshold for Reflectance or a valid collumn in las@data with classes")
+  }
+  
   
   # use 5cm voxel to assign the most abundant class to all points in voxel
   class_vox <- las |> voxel_metrics(most_abundant(Classification), res = vox_size)
@@ -496,106 +624,151 @@ tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores(
     if(!dir.exists(target_dir)){
       dir.create(target_dir)
     }
-    if(!is.empty(vegetation)) write_obj_df(veg_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_leaves.obj"), mtl_name = leaf_mtl,mtl_lib = mtl_lib, backfaces = backfaces)
-    if(!is.empty(bark)) write_obj_df(bark_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_bark.obj"), mtl_name = bark_mtl,mtl_lib = mtl_lib, backfaces = backfaces)
+    if(!is.empty(vegetation)) write_obj_df(veg_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_leaves.obj"), mtl_name = leaf_mtl,mtl_lib = mtl_lib, backfaces = backfaces, mode = write_mode, dart_x_off = dart_x_off)
+    if(!is.empty(bark)) write_obj_df(bark_polys, paste0(target_dir,tools::file_path_sans_ext(basename(f)), "_bark.obj"), mtl_name = bark_mtl,mtl_lib = mtl_lib, backfaces = backfaces, mode = write_mode, dart_x_off = dart_x_off)
   }
+}
+
+#Function to calculate a time series of sun vectors in less standard
+#
+# @param start/end start and end time of the time series
+# @param increment time increment in seconds
+# @param lat/lon latitude and longitude of the location
+sun_vectors <- function(start = "2023-08-10 10:00:00", end = "2023-08-10 18:00:00", increment = 60, lat = 48.0001, lon = 7.8) {
+  # create a sequence of times
+  
+  times <- seq(as.POSIXct(start), as.POSIXct(end), by = increment)
+  # create a sequence of sun vectors
+  sun_vecs <- t(sapply(times, function(x) {
+    oce_pos <- oce::sunAngle(as.POSIXct(x, tz = "CET"), lon, lat)
+    return(c(oce_pos$azimuth, 90 - oce_pos$altitude))
+  }))
+  return(data.frame(time = times, azimuth = sun_vecs[,1], altitude = sun_vecs[,2]))
+}
+
+# function to read the ENVI output off less
+#
+# @param f filepath to the ENVI output
+read_less <- function(f){
+  caTools::read.ENVI(f)
+}
+
+# function to read the less npy output (requires reticulate and a python environment with numpy installed)
+#
+# @param f filepath to the npy output
+read_less_npy <- function(f){
+  np <- reticulate::import("numpy")
+  np$load(f)
+}
+
+# function to calculate the area covered by a sensor
+# 
+# @param FOV field of view of the sensor in degrees (single value if FOV_X == FOV_Y or vector of length 2)
+# @param D distance distance to the object in m
+footprint_area <- function(FOV, D){
+  if(length(FOV) == 1){
+    FOV <- c(FOV,FOV)
+  } 
+  return(prod(2*D*tan((FOV*(pi/180))/2)))
+
+}
+
+# function to convert dart to less spectra
+#
+# @param f filepath to the dart spectra
+dart_to_less_spectra <- function(f){
+  dart <- read.table(f, sep = "\t", comment.char = "*", header = T)
+  less_df <- data.frame(wavelength = dart$wavelength*1000, front_reflectance = dart$reflectance/100, back_reflectance = dart$reflectance/100, transmittance = dart$diffuse_transmittance/100)
+  # write results to same folder
+  write.table(less_df, paste0(tools::file_path_sans_ext(f), "_less.txt"), row.names = F, col.names = F, sep = "\t")
+}
+
+# Function to convert PAR surface irradiance to photon flux
+#
+# @param irradiance surface irradiance
+# @param bw wavelength of the sensor in nm (default = 550)
+convert_irradiance_to_photon_flux <- function(irradiance, bw = 550) {
+  h <- 6.626e-34  # Planck's constant (JÂ·s)
+  c <- 3e8        # Speed of light (m/s)
+  avogadro_number <- 6.022e23  # Avogadro's number (photons/mol)
+  lambda_avg <- bw * 1e-9  # Average wavelength of PAR in meters (550 nm)
+
+  energy_per_photon <- h * c / lambda_avg  # J/photon
+  photon_flux <- irradiance / energy_per_photon  # photons/m^2/s
+  photon_flux_umol <- (photon_flux / avogadro_number) * 1e6  # µmol/m^2/s
+
+  return(photon_flux_umol)
+}
+
+# helper function to extract the model iteration integer from batch processing in less
+#
+# @param filepath path to the file
+# @param pattern regex pattern to extract the integer
+extract_integer <- function(filepath, pattern = "time_([0-9]+)\\.hdr") {
+  match <- stringr::str_match(filepath, pattern)
+  return(as.integer(match[2]))
 }
 
 # ###############
 # ## read and preprocess data 
 # ###############
-# 
+
+# get start time 
+t1 <- Sys.time()
 las <- lidR::readTLSLAS(filename)
 
 # apply offset for to avoid numerical problems
 means <- apply(las@data,2,mean)
-las@data$X <- las@data$X - means[1]
-las@data$Y <- las@data$Y - means[2]
-las@data$Z <- las@data$Z - means[3]
+maxs  <- apply(las@data,2,max)
+mins <- apply(las@data,2,min)
+las@data$X <- las@data$X - mins[1]
+las@data$Y <- las@data$Y - mins[2]
+las@data$Z <- las@data$Z - mins[3]
 
+x_off <- max(las@data$X)
 
 veg_bark <- tree_mesh(las, target_dir = NA, segments = 5)
 
-write_obj_df(veg_bark$leaves, "C:/Users/Julian/Desktop/leaves.obj", mtl_name = "Fagus_sylvatica_leaf", mtl_lib = "materials", backfaces = F)
-write_obj_df(veg_bark$bark, "C:/Users/Julian/Desktop/bark.obj", mtl_name = "Fagus_sylvatica_bark", mtl_lib = "materials", backfaces = F)
-
-# ###################
-# ## calculate bbox for blender images
-# ###################
-# 
-# img_dims <- c(2048,1600)
-# ortho_scale <- 29.2
-# px_size <- ortho_scale/img_dims[1] 
-# 
-# ul <- means[1:2] + (img_dims/2) * px_size * c(-1,1)# upper left 
-# lr  <- means[1:2] + (img_dims/2) * px_size * c(1,-1) # lower right
-# 
-# ###################
-# ## write csv with metadata
-# ###################
-# 
-# data.frame(
-#   data = c(
-#     "filename",
-#     "vox_size",
-#     "X_offset",
-#     "Y_offset",
-#     "Z_offset",
-#     "px_size",
-#     "ul_X",
-#     "ul_Y",
-#     "lr_X",
-#     "lr_Y"
-#   ),
-#   value = c(
-#     filename,
-#     vox_size,
-#     means[1],
-#     means[2],
-#     means[3],
-#     px_size,
-#     ul[1],
-#     ul[2],
-#     lr[1],
-#     lr[2]
-#   )
-# ) |> write.csv2(paste0(outdir,"metadata.csv"))
-# 
-# 
-# # code snipped to add worldfiles to png's created by blender
-# 
-# worldfile <- paste(px_size, 0,0,-px_size, ul[1], ul[2], sep = "\n")
-# 
-# png_dir <- "V:/RayLeaf/out/shade_sec/"
-# files <- list.files(png_dir, pattern = "*.png")
-# for(f in files) writeLines(worldfile, paste0( png_dir, strsplit(f, "[.]")[[1]][1], ".pgw"))
+write_obj_df(veg_bark$leaves, "V:/RayLeaf/less/leaves.obj", mtl_name = "Malus_domestica_leaf", mtl_lib = "Malus_domestica", backfaces = F, mode = "less")
+write_obj_df(veg_bark$bark, "V:/RayLeaf/less/bark.obj", mtl_name = "Malus_domestica_bark", mtl_lib = "Malus_domestica", backfaces = F, mode = "less")
+# end 
+t2 <- Sys.time()
+print(t2-t1)
 
 
-###############
-## process multiple trees
-###############
+# generate voxel objs with a list of lad, etc. for turbid media in less
+library(AMAPVox)
 
-mesh_dir <- "E:/2021-07-15 hartheim.RiSCAN/EXPORTS/single_trees2/meshes/"
-if(!dir.exists(mesh_dir)){
-  dir.create(mesh_dir)
-}
+vox_base <- c(-6, -13.0, -1.0)
+mins_vox <- c(-4.815,   -13.006,    -1.513)
+vox_res <- 1
+vxsp_foliage <- AMAPVox::readVoxelSpace("V:/RayLeaf/less/AMAPvox_out/out1/apfelbaum_1_foliage_pad.vox")
 
-# example usage
-times <- list()
-# define range to restart if process died
-f_files <- list.files("E:/2021-07-15 hartheim.RiSCAN/EXPORTS/single_trees2/", pattern = "*.las", full.names = T)
-species_estimates <- read.csv("E:/2021-07-15 hartheim.RiSCAN/EXPORTS/species_predictions_2021.csv")
-# define range if variable f already exists
-if(exists("f")) {
-  f_range <- which(f_files == f):length(f_files)
-} else {
-  f_range <- 1:length(f_files)
-}
-cl <- makeCluster(num_cores)
-registerDoParallel(cl)
-for(f in f_files[f_range]){
-  species <- species_estimates[species_estimates$filename == basename(f), "species"]
-  times <- c(times, system.time(tree_mesh(f, target_dir = mesh_dir, segments = 3, mtl_prefix = species, mtl_lib = "materials",backfaces = F, class_thresh = -8, buffer = sqrt(3 * 0.005^2))))
-  print(paste(Sys.time(), basename(f)))
-}
-stopCluster(cl)
+# print summary stats
+sum(vxsp_foliage@data$pad > 0.0001)
+mean(vxsp_foliage@data$pad[vxsp_foliage@data$pad > 0.0001])
+sd(vxsp_foliage@data$pad[vxsp_foliage@data$pad > 0.0001])
+sum(vxsp_foliage@data$pad)
+
+vxsp_foliage@data$i <- (vxsp_foliage@data$i)*vox_res  +vox_base[1] - mins_vox[1] + vox_res
+vxsp_foliage@data$j <- (vxsp_foliage@data$j)*vox_res  +vox_base[2] - mins_vox[2] + vox_res
+vxsp_foliage@data$k <- (vxsp_foliage@data$k)*vox_res  +vox_base[3] - mins_vox[3] 
+
+write_obj_vox(vxsp_foliage@data[,1:3],vox_res, "V:/RayLeaf/less/AMAPvox_out/out1/vox_foliage1.obj", mtl_name = "Malus_domestica_leaf", mtl_lib = "materials", backfaces = F, mode = "less")
+write.csv(data.frame(vox = paste0("voxel_vxsp_foliage@data", 1:nrow(vxsp_foliage@data)), pad = vxsp_foliage@data$pad), "V:/RayLeaf/less/AMAPvox_out/out1/vox_foliage1.csv")
+
+vox_res <- 0.2
+vxsp_foliage <- AMAPVox::readVoxelSpace("V:/RayLeaf/less/AMAPvox_out/out1/apfelbaum_02_foliage_pad.vox")
+# print summary stats
+sum(vxsp_foliage@data$pad > 0.0001)
+mean(vxsp_foliage@data$pad[vxsp_foliage@data$pad > 0.0001])
+sd(vxsp_foliage@data$pad[vxsp_foliage@data$pad > 0.0001])
+sum(vxsp_foliage@data$pad)*(0.2^3)
+
+
+vxsp_foliage@data$i <- (vxsp_foliage@data$i)*vox_res  +vox_base[1] - mins_vox[1] + vox_res
+vxsp_foliage@data$j <- (vxsp_foliage@data$j)*vox_res  +vox_base[2] - mins_vox[2] + vox_res
+vxsp_foliage@data$k <- (vxsp_foliage@data$k)*vox_res  +vox_base[3] - mins_vox[3] 
+
+write_obj_vox(vxsp_foliage@data[,1:3],vox_res, "V:/RayLeaf/less/AMAPvox_out/out1/vox_foliage02.obj", mtl_name = "Malus_domestica_leaf", mtl_lib = "materials", backfaces = F, mode = "less")
+write.csv(data.frame(vox = paste0("voxel_vxsp_foliage@data", 1:nrow(vxsp_foliage@data)), pad = vxsp_foliage@data$pad), "V:/RayLeaf/less/AMAPvox_out/out1/vox_foliage02.csv")
