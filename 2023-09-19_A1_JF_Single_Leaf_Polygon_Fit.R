@@ -273,7 +273,7 @@ write_obj_par <- function(pol, file, mtl_name = "Material1", cores = 5){
 # @param mtl_name character containing the name for the Material specified in a separate mtl file 
 # @param fast if set to TRUE it will use less accurate rounding to speed up the process and create smaller files
 # @param backfaces if set to TRUE it will add the reverse order of the triangles to create backfaces
-# @param mode if set to "normal" it will write the polygons as they are, if set to "dart" it will change the order of the dimensions to yxz
+# @param mode if set to "normal" it will write the polygons as they are, if set to "dart" or "less" it will change the order of the dimensions to be used in rtm
 # @param dart_x_off if mode id "dart" subtract each x-value from this value to invert the x-axis
 write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = T, backfaces = T, mode = "normal", dart_x_off = 0){
   # generate header information
@@ -367,7 +367,7 @@ write_obj_df <- function(pol, file, mtl_name = "Material1",mtl_lib = NA, fast = 
 # @param mtl_name character containing the name for the Material specified in a separate mtl file 
 # @param fast if set to TRUE it will use less accurate rounding to speed up the process and create smaller files
 # @param backfaces if set to TRUE it will add the reverse order of the triangles to create backfaces
-# @param mode if set to "normal" it will write the polygons as they are, if set to "dart" it will change the order of the dimensions to yxz
+# @param mode if set to "normal" it will write the polygons as they are, if set to "dart" or "less" it will change the order of the dimensions to be used in rtm
 # @param dart_x_off if mode id "dart" subtract each x-value from this value to invert the x-axis
 write_obj_vox <- function(vox, vox_res = 0.25, file, mtl_name = "Material1",mtl_lib = NA, fast = T, backfaces = T, mode = "normal", dart_x_off = 0){
   # generate header information
@@ -494,7 +494,7 @@ generate_mtl_file <- function(palette = sample(grey.colors(n_cols)), filename = 
 # @param backfaces if TRUE it will add the reverse order of the triangles to create backfaces (default = T)
 # @param mtl_prefix prefix for the material name in the mtl file usually the tree species (default = NA)
 # @param mtl_lib name of the mtl library file (default = NA) becomes the same as the mtl_name (prefix + _ + leaf or bark)
-# @param write_mode if set to "normal" it will write the polygons as they are, if set to "dart" it will change the order of the dimensions to yxz (default = "normal")
+# @param write_mode if set to "normal" it will write the polygons as they are, if set to "dart" or "less" it will change the order of the dimensions to be used in rtm
 # @param segments number of segments for the single point circle (default = 3)
 # @param dart_x_off if write_mode "dart" subtract each x-value from this value to invert the x-axis (default = 0)
 tree_mesh <- function(f, class_thresh = -5.4, num_cores = parallel::detectCores()/2-1, vox_size = 0.05, buffer = 0.005, min_pts_vox = 3, singletons_factor = 1/3, segments = 3, target_dir = basename(f), backfaces = T, mtl_prefix = NA, mtl_lib = NA, write_mode = "normal", dart_x_off = 0){
@@ -695,7 +695,7 @@ convert_irradiance_to_photon_flux <- function(irradiance, bw = 550) {
 
   energy_per_photon <- h * c / lambda_avg  # J/photon
   photon_flux <- irradiance / energy_per_photon  # photons/m^2/s
-  photon_flux_umol <- (photon_flux / avogadro_number) * 1e6  # µmol/m^2/s
+  photon_flux_umol <- (photon_flux / avogadro_number) * 1e6  # ?mol/m^2/s
 
   return(photon_flux_umol)
 }
