@@ -10,4 +10,6 @@ Within the data folder you can find an example point cloud and PAR sensor data r
 
 ![workflow](./images/animation.gif)
 
+The development of the software was funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) – Project FR 4404/1-1, “Making the direct link between light regime and forest biodiversity – a 3D spatially explicit modelling approach based on TLS, CNNs and ray tracing”.
+
 How to cite:
