@@ -3,6 +3,9 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14204435.svg)](https://doi.org/10.5281/zenodo.14204435)
 
+How to cite:
+
+Frey J, Schindler Z, McClatchy P, Morhart C, Larysch E, Seifert T (2025) The 3D reconstruction of wood and leaves from terrestrial laser scanning – a case study on PAR measurements below a solitary Malus domestica tree. Silva Fennica 59. https://doi.org/10.14214/sf.24027
 
 ![example image](./images/front_render_detail.jpg)
 
@@ -16,4 +19,4 @@ Within the data folder you can find an example point cloud and PAR sensor data r
 
 The development of the software was funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) – Project FR 4404/1-1, “Making the direct link between light regime and forest biodiversity – a 3D spatially explicit modelling approach based on TLS, CNNs and ray tracing”.
 
-How to cite:
+
